@@ -29,6 +29,11 @@ function init_WC_Gateway_PAYNOW_class() {
 	 */ 
 	class WC_Gateway_PAYNOW extends WC_Payment_Gateway {
 
+		var $notify_url;
+		
+		var $live_url = 'http://gtw.paynow.cl/neworder/';
+		var $test_url = 'http://qa.gtw.paynow.cl/neworder/';
+
 		/**
 		 * Constructor for the gateway.
 		 */
@@ -38,6 +43,7 @@ function init_WC_Gateway_PAYNOW_class() {
 			$this->has_fields         = true;
 			$this->method_title       = __( 'Paynow', 'woocommerce' );
 			$this->method_description = __( 'Permite realizar pagos a través de Paynow.', 'woocommerce' );
+			$this->notify_url = WC()->api_request_url( 'WC_Gateway_PAYNOW' );
             $this->supports           = array(
                 'subscriptions',
                 'products',
@@ -53,6 +59,16 @@ function init_WC_Gateway_PAYNOW_class() {
 			$this->instructions = $this->get_option( 'instructions', $this->description );
             $this->businessID = $this->get_option('businessID');
             $this->auth_token = $this->get_option('auth_token');
+            
+            $this->debug = $this->get_option( 'debug', 'yes' ) === 'yes' ? true : false;
+            $this->is_test = $this->get_option( 'is_test', 'yes' ) === 'yes' ? true : false;
+
+            $this->gateway_url = $this->is_test ? $this->live_url : $this->test_url;
+
+            // Logs
+			if ( 'yes' == $this->debug ) {
+				$this->log = new WC_Logger();
+			}
 
 			// Actions
 			add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
@@ -87,6 +103,20 @@ function init_WC_Gateway_PAYNOW_class() {
 					'type'    => 'checkbox',
 					'label'   => __( 'Habilitar Paynow', 'woocommerce' ),
 					'default' => 'yes'
+				),
+				'is_test' => array(
+					'title'       => __( 'Paynow sandbox', 'woocommerce' ),
+					'type'        => 'checkbox',
+					'label'       => __( 'Enable Paynow sandbox', 'woocommerce' ),
+					'default'     => 'no',
+					'description' => sprintf( __( 'Paynow sandbox can be used to test payments. Sign up for a developer account <a href="%s">here</a>.', 'woocommerce' ), 'https://qa.paynow.cl/' ),
+				),
+				'debug' => array(
+					'title'       => __( 'Debug Log', 'woocommerce' ),
+					'type'        => 'checkbox',
+					'label'       => __( 'Enable logging', 'woocommerce' ),
+					'default'     => 'no',
+					'description' => sprintf( __( 'Log Paynow events, such as IPN requests, inside <code>%s</code>', 'woocommerce' ), wc_get_log_file_path( 'paynow' ) )
 				),
 				'title' => array(
 					'title'       => __( 'Título', 'woocommerce' ),
@@ -163,6 +193,11 @@ function init_WC_Gateway_PAYNOW_class() {
 
 			$order = wc_get_order( $order_id );
 
+			//productos
+            echo "<pre>";
+            var_dump($this);
+            echo "</pre>";
+
             //productos
             echo "<pre>";
             var_dump($order->get_items());
@@ -174,10 +209,55 @@ function init_WC_Gateway_PAYNOW_class() {
             echo "App seleccionada:  ".$payment_app;
             echo "</pre>";
 
-            //echo "<pre>";
-            //var_dump($order->get_items());
-            //echo "</pre>";
+			$postData = array();
+			
+			//Identificar el negocio donde vas a recaudar tus ventas
+			$postData['businessID'] = $this->businessID;
+			$postData['tSource'] = 'API';
+			$postData['tSourceID'] = 'http://store.paynow.cl';
+			$postData['businessLogo'] = '';
+			
+			// Mostrar formulario de despacho y facturación (Y = Solicita, N = NO Solicita)
+			$postData['includeShipping'] = 'N';
+			$postData['shippingAmount'] = '0';
+			$postData['shippingComments'] = '';
+			$postData['includeBilling'] = 'N';
+			$postData['billingComments'] = '';
+			$postData['paymentComments'] = '';
+
+			// Detallar la información del producto que tu cliente va a comprar. -->
+			$postData['itemDescription'] = 'Producto 1';
+			$postData['itemCurrency'] = 'CLP';
+			$postData['itemQuantity'] = '1';
+			$postData['itemAmount'] = '100';
+			
+			$ch = curl_init();
+			curl_setopt($ch, CURLOPT_URL, $url);
+			curl_setopt($ch, CURLOPT_HEADER, 0);
+			curl_setopt($ch, CURLOPT_USERPWD, $this->businessID . ":" . $this->token);
+			curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+			$response = curl_exec($ch);
+			curl_close($ch);
+			$result = json_decode($response, true);
+
+			echo "<pre>";
+            var_dump($postData);
+            echo "</pre>";
+            
             die();
+			
+			if ($result["status"] == 'ok')
+			{
+				header("location:$url"."?token=".$result["token"]);
+			}
+			else
+			{
+				echo $result["message"];
+			}
+
 			// Mark as on-hold (we're awaiting the payment)
 			$order->update_status( 'on-hold', __( 'Awaiting Paynow payment', 'woocommerce' ) );
 
