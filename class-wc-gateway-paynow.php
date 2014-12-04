@@ -88,6 +88,12 @@ function init_WC_Gateway_PAYNOW_class() {
 					'label'   => __( 'Habilitar Paynow', 'woocommerce' ),
 					'default' => 'yes'
 				),
+				'qa' => array(
+					'title'   => __( 'Homologación?', 'woocommerce' ),
+					'type'    => 'checkbox',
+					'label'   => __( 'Homologación?', 'woocommerce' ),
+					'default' => 'yes'
+				),
 				'title' => array(
 					'title'       => __( 'Título', 'woocommerce' ),
 					'type'        => 'text',
@@ -160,7 +166,12 @@ function init_WC_Gateway_PAYNOW_class() {
 		 * @return array
 		 */
 		public function process_payment( $order_id ) {
-
+            
+            //SI ESTÁ EN HOMOLOGACIÓN, PARÁMETRO qa SELECCIONADO POR DEFECTO
+            //SE DEBERÍA UTILIZAR PAYNOW DE QA PARA PROBAR MIENTRAS EL CLIENTE
+            //ESTE MONTANDO EL PLUGIN EN SU WordPress.
+            //CUANDO FUNCIONE EN QA QUE DESMARQUE EL CHECK EN LAS SETTINGS
+            
 			$order = wc_get_order( $order_id );
 
             //productos
