@@ -1,5 +1,9 @@
 <?php
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit; // Exit if accessed directly
+}
+
 /**
  * @package Paynow
  * @version 1.0
@@ -34,12 +38,15 @@ function init_WC_Gateway_PAYNOW_class() {
 		var $live_url = 'http://gtw.paynow.cl/neworder/';
 		var $test_url = 'http://qa.gtw.paynow.cl/neworder/';
 
+		var $api_live_url = 'http://gtw.paynow.cl/api/';
+		var $api_test_url = 'http://qa.gtw.paynow.cl/api/';
+
 		/**
 		 * Constructor for the gateway.
 		 */
 		public function __construct() {
 			$this->id                 = 'paynow';
-			$this->icon               = '';//apply_filters('woocommerce_bacs_icon', '');
+			$this->icon               = 'http://qa.gtw.paynow.cl/static/images/logotipo-mini-header-c.png';//apply_filters('woocommerce_bacs_icon', '');
 			$this->has_fields         = true;
 			$this->method_title       = __( 'Paynow', 'woocommerce' );
 			$this->method_description = __( 'Permite realizar pagos a través de Paynow.', 'woocommerce' );
@@ -63,7 +70,8 @@ function init_WC_Gateway_PAYNOW_class() {
             $this->debug = $this->get_option( 'debug', 'yes' ) === 'yes' ? true : false;
             $this->is_test = $this->get_option( 'is_test', 'yes' ) === 'yes' ? true : false;
 
-            $this->gateway_url = $this->is_test ? $this->live_url : $this->test_url;
+            $this->gateway_url = $this->is_test ? $this->test_url : $this->live_url;
+            $this->api_url = $this->is_test ? $this->api_test_url : $this->api_live_url;
 
             // Logs
 			if ( 'yes' == $this->debug ) {
@@ -73,11 +81,13 @@ function init_WC_Gateway_PAYNOW_class() {
 			// Actions
 			add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 			//add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'save_account_details' ) );		
-			add_action( 'woocommerce_thankyou_paynow', array( $this, 'thankyou_page' ) );
+			add_action( 'woocommerce_thankyou_paynow', array( $this, 'gateway_return_handler' ) );
 
 			// Customer Emails
 			add_action( 'woocommerce_email_before_order_table', array( $this, 'email_instructions' ), 10, 3 );
 
+			// Payment listener/API hook
+			add_action( 'woocommerce_api_wc_gateway_paynow', array( $this, 'check_ipn_response' ) );
 		}
 
         /**
@@ -89,7 +99,113 @@ function init_WC_Gateway_PAYNOW_class() {
             if ( $description ) {
                 echo wpautop( wptexturize( trim( $description ) ) );
             }
-            echo "<select class='chosen_select' name='payment_app'><option value='bchile'>bchile</option><option value='bestado'>bestado</option></select>";
+
+            $methods = array(
+            	'bchile' => array( 
+            		'name' => 'Banco Chile-Edwards/Citi', 
+            		'img' => 'http://qa.gtw.paynow.cl/media/logo/banco-de-chile.jpg' 
+            	),
+            	'bestado' => array( 
+            		'name' => 'Banco Estado', 
+            		'img' => 'http://qa.gtw.paynow.cl/media/logo/banco-estado.jpg' 
+            	),
+            	'webpay' => array( 
+            		'name' => 'WebPay', 
+            		'img' => 'http://qa.gtw.paynow.cl/media/logo/web-pay.png' 
+            	),
+            	'authorize_net' => array( 
+            		'name' => 'Authorize.NET', 
+            		'img' => 'http://qa.gtw.paynow.cl/media/logo/AuthNet.jpg' 
+            	)
+            );
+
+            $html = '<div>';
+            foreach ($methods as $key => $value) {
+            	$html .= '<div>
+            	<input id="pm_' . $key . '" type="radio" name="payment_app" value="' . $key . '" />
+        		<img onclick="document.getElementById(\'pm_' . $key . '\').click()" title="' . $value['name'] . '" alt="' . $value['name'] . '" src="' . $value['img'] . '" />
+        		</div><br/>';
+            }
+            $html .= '</div>';
+
+            print $html;
+
+            // echo "<select class='chosen_select' name='payment_app'>
+            // <option value='bchile'>bchile</option>
+            // <option value='bestado'>bestado</option>
+            // </select>";
+        }
+
+        /**
+		* Return handler
+		*/
+        public function check_ipn_response(){
+        	@ob_clean();
+
+			$ipn_response = ! empty( $_POST ) ? $_POST : false;
+
+			if ( $ipn_response ) {
+
+				$order_id = $ipn_response[ "tx_id" ];
+				$order_status = $ipn_response[ "tx_status" ];
+
+				if ( $order_id != '' ){
+
+					$order = wc_get_order ( $order_id );
+
+					if ( $order ){
+
+						// Check order not already completed
+						if ( $order->has_status( 'completed' ) ) {
+							if ( $this->is_test ) {
+								$this->log->add( 'paynow', 'Aborting, Order #' . $order->id . ' is already complete.' );
+							}
+							exit;
+						}
+
+						if ( $order_status == "COMPLETED" || $order_status == "CONFIRMED" ){
+
+							$order->add_order_note( __( 'IPN payment completed', 'woocommerce' ) );
+							$order->payment_complete( '' );
+
+						} else if ( $order_status == "REJECTED" || $order_status == "ERROR" ){
+
+							$order->update_status( 'failed', sprintf( __( 'Payment %s via IPN.', 'woocommerce' ), $order_status ) );
+
+						}else {
+
+							$order->add_order_note( sprintf( __( 'Payment %s via IPN.', 'woocommerce' ), $order_status ) );
+
+						}
+
+						exit;
+					}
+				}
+			} 
+			
+			wp_die( "Paynow IPN Request Failure", "Paynow IPN", array( 'response' => 200 ) );
+        }
+
+		/**
+		* Return handler
+		*/
+        public function gateway_return_handler( $order_id ){
+        	
+        	$posted = stripslashes_deep( $_REQUEST );
+        	
+        	if ( $this->is_test ){
+        		
+        		$result = '';
+        		foreach ($posted as $key => $value) {
+        			$result .= ' & ' . $key . '=' . $value;	
+        		}
+        		
+        		$this->log->add( 'paynow', 'Payment return: (' . $result . ')' );
+        	}
+
+        	if ( $this->instructions ) {
+				echo wpautop( wptexturize( wp_kses_post( $this->instructions ) ) );
+			}
         }
 
 		/**
@@ -193,85 +309,152 @@ function init_WC_Gateway_PAYNOW_class() {
 
 			$order = wc_get_order( $order_id );
 
-			//productos
-            echo "<pre>";
-            var_dump($this);
-            echo "</pre>";
+			$post_data = array();
 
-            //productos
-            echo "<pre>";
-            var_dump($order->get_items());
-            echo "</pre>";
-
-            //payment_app
-            echo "<pre>";
-            $payment_app = $_POST['payment_app'];
-            echo "App seleccionada:  ".$payment_app;
-            echo "</pre>";
-
-			$postData = array();
-			
 			//Identificar el negocio donde vas a recaudar tus ventas
-			$postData['businessID'] = $this->businessID;
-			$postData['tSource'] = 'API';
-			$postData['tSourceID'] = 'http://store.paynow.cl';
-			$postData['businessLogo'] = '';
-			
-			// Mostrar formulario de despacho y facturación (Y = Solicita, N = NO Solicita)
-			$postData['includeShipping'] = 'N';
-			$postData['shippingAmount'] = '0';
-			$postData['shippingComments'] = '';
-			$postData['includeBilling'] = 'N';
-			$postData['billingComments'] = '';
-			$postData['paymentComments'] = '';
+			$post_data['businessID'] = $this->businessID;
+			$post_data['tSource'] = 'API';
+			$post_data['tSourceID'] = 'http://store.paynow.cl';
+			$post_data['businessLogo'] = '';
 
-			// Detallar la información del producto que tu cliente va a comprar. -->
-			$postData['itemDescription'] = 'Producto 1';
-			$postData['itemCurrency'] = 'CLP';
-			$postData['itemQuantity'] = '1';
-			$postData['itemAmount'] = '100';
+			$item_loop = 0;
+			if ( sizeof( $order->get_items() ) > 0 ) {
+				foreach ( $order->get_items() as $item ) {
+					if ( ! $item['qty'] ) {
+						continue;
+					}
+
+					$item_loop ++;
+
+					$item_name = $item['name'];
+					$item_meta = new WC_Order_Item_Meta( $item['item_meta'] );
+
+					if ( $meta = $item_meta->display( true, true ) ) {
+						$item_name .= ' ( ' . $meta . ' )';
+					}
+
+					// Detallar la información del producto que tu cliente va a comprar. -->
+					$post_data[ 'itemDescription_' . $item_loop ] = $item_name;
+					$post_data[ 'itemCurrency_' . $item_loop ] = get_woocommerce_currency();
+					$post_data[ 'itemQuantity_' . $item_loop ] = $item['qty'];
+					$post_data[ 'itemAmount_' . $item_loop ] = $order->get_item_subtotal( $item, false );
+				}
+				$post_data[ 'itemCount' ] = $item_loop;
+			}
+
+			// Discount
+			if ( $order->get_cart_discount() > 0 ) {
+				//$args['discount_amount_cart'] = round( $order->get_cart_discount(), 2 );
+			}
+
+			// Fees
+			if ( sizeof( $order->get_fees() ) > 0 ) {
+				foreach ( $order->get_fees() as $item ) {
+					// $item_loop ++;
+					// $args[ 'item_name_' . $item_loop ] = $this->paypal_item_name( $item['name'] );
+					// $args[ 'quantity_' . $item_loop ]  = 1;
+					// $args[ 'amount_' . $item_loop ]    = $item['line_total'];
+
+					// if ( $args[ 'amount_' . $item_loop ] < 0 ) {
+					// 	return false; // Abort - negative line
+					// }
+				}
+			}
+
+			// Mostrar formulario de despacho y facturación (Y = Solicita, N = NO Solicita)
+			$post_data[ 'includeBilling' ] = 'N';
+
+			$post_data[ 'billing_first_name' ] = $order->billing_first_name;
+			$post_data[ 'billing_last_name' ] = $order->billing_last_name;
+			$post_data[ 'billing_company' ] = $order->billing_company;
+			$post_data[ 'billing_address_1' ] = $order->billing_address_1;
+			$post_data[ 'billing_address_2' ] = $order->billing_address_2;
+			$post_data[ 'billing_city' ] = $order->billing_city;
+			$post_data[ 'billing_state' ] = $order->billing_state;
+			$post_data[ 'billing_postcode' ] = $order->billing_postcode;
+			$post_data[ 'billing_country' ] = $order->billing_country;
+			$post_data[ 'billing_email' ] = $order->billing_email;
+
+			$post_data[ 'billingComments' ] = '';
+			$post_data[ 'paymentComments' ] = '';
+
+			$post_data[ 'includeShipping' ] = 'N';
+			$post_data[ 'shippingAmount' ] = '0';
+			if ( $order->get_total_shipping() > 0 ) {
+				$post_data[ 'includeShipping' ] = 'Y';
+				$post_data[ 'shippingAmount' ] = $order->get_total_shipping();
+				$post_data[ 'shippingComments' ] = sprintf( __( 'Shipping via %s', 'woocommerce' ), $order->get_shipping_method() );
+			}
+
+			$post_data[ 'return_url' ] = esc_url( $this->get_return_url( $order ) );
+			$post_data[ 'cancel_url' ] = esc_url( $order->get_cancel_order_url() );
+			$post_data[ 'notification_url' ] = $this->notify_url;
+
+			$post_data[ 'skip_wizard' ] = 'Y';
+			$post_data[ 'payment_app' ] = $_POST[ 'payment_app' ];
+
+			$post_data[ 'internalTransactionID' ] = $order_id;
+
+			$basic_auth = base64_encode( $this->businessID . ":" . $this->auth_token );
+
+			$post_array = array(
+				'method' => 'POST',
+				'timeout' => 45,
+				'redirection' => 5,
+				'httpversion' => '1.0',
+				'blocking' => true,
+				'headers' => array( 
+					'Content-Type' => 'application/json',
+					'Authorization' => 'Basic ' . $basic_auth 
+				),
+				'body' => $post_data,
+				'cookies' => array()
+		    );
+		    
+		    echo "<pre>";
+		    print_r($this->gateway_url);
+		    print_r('<br/>');
+            print_r($post_array);
+
+            // print_r($order);
+		    // print_r($_POST);
+            
+            $response = wp_remote_post( $this->gateway_url, $post_array );
+
+            print_r($response);
+
+			if ( is_wp_error( $response ) ) {
+				wc_add_notice( __('Payment error: ', 'woothemes') . $response->get_error_message(), 'error' );
+				return false;
+			}
 			
-			$ch = curl_init();
-			curl_setopt($ch, CURLOPT_URL, $url);
-			curl_setopt($ch, CURLOPT_HEADER, 0);
-			curl_setopt($ch, CURLOPT_USERPWD, $this->businessID . ":" . $this->token);
-			curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-			curl_setopt($ch, CURLOPT_RETURNTRANSFER,1);
-			curl_setopt($ch, CURLOPT_POST, 1);
-			curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-			$response = curl_exec($ch);
-			curl_close($ch);
-			$result = json_decode($response, true);
+			$result = json_decode($response[ 'body' ], true);
 
 			echo "<pre>";
-            var_dump($postData);
+            print_r($result);
             echo "</pre>";
-            
-            die();
 			
-			if ($result["status"] == 'ok')
-			{
-				header("location:$url"."?token=".$result["token"]);
+			if ($result["status"] == 'ok') {
+				// Mark as on-hold (we're awaiting the payment)
+				$order->update_status( 'on-hold', __( 'Awaiting Paynow payment', 'woocommerce' ) );
+
+				// Reduce stock levels
+				$order->reduce_order_stock();
+
+				// Remove cart
+				//WC()->cart->empty_cart();
+
+				// Return thankyou redirect
+				return array(
+					'result' 	=> 'success',
+					'redirect'	=> $this->gateway_url . "?token=" . $result["token"]
+				);
 			}
 			else
 			{
-				echo $result["message"];
+				wc_add_notice( __('Payment error:', 'woothemes') . $result["message"], 'error' );
+				return;
 			}
-
-			// Mark as on-hold (we're awaiting the payment)
-			$order->update_status( 'on-hold', __( 'Awaiting Paynow payment', 'woocommerce' ) );
-
-			// Reduce stock levels
-			$order->reduce_order_stock();
-
-			// Remove cart
-			WC()->cart->empty_cart();
-
-			// Return thankyou redirect
-			return array(
-				'result' 	=> 'success',
-				'redirect'	=> $this->get_return_url( $order )
-			);
 		}
 	}
 }
