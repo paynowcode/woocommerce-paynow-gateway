@@ -9,13 +9,13 @@ if ( ! defined( 'ABSPATH' ) ) {
  * @version 1.0
  */
 /*
-Plugin Name: Paynow
-Plugin URI: http://paynow.com
-Description: Blaaaa 
-Armstrong: Blaaa
-Author: Paynow Team
+Plugin Name: Woocommerce Paynow
+Plugin URI: https://www.paynow.cl
+Description: Venda en su sitio web, redes sociales y tiendas virtuales.
+Armstrong:
+Author: Equipo Paynow
 Version: 1.0
-Author URI: http://paynow.tt/
+Author URI: https://github.com/paynowcode
 */
 
 add_action( 'plugins_loaded', 'init_WC_Gateway_PAYNOW_class' );
@@ -34,12 +34,9 @@ function init_WC_Gateway_PAYNOW_class() {
 	class WC_Gateway_PAYNOW extends WC_Payment_Gateway {
 
 		var $notify_url;
-		
-		var $live_url = 'http://gtw.paynow.cl/neworder/';
-		var $test_url = 'http://qa.gtw.paynow.cl/neworder/';
 
-		var $api_live_url = 'http://gtw.paynow.cl/api/';
-		var $api_test_url = 'http://qa.gtw.paynow.cl/api/';
+		var $live_url = 'http://gtw.paynow.cl';
+		var $test_url = 'http://qa.gtw.paynow.cl';
 
 		/**
 		 * Constructor for the gateway.
@@ -64,14 +61,16 @@ function init_WC_Gateway_PAYNOW_class() {
 			$this->title        = $this->get_option( 'title' );
 			$this->description  = $this->get_option( 'description' );
 			$this->instructions = $this->get_option( 'instructions', $this->description );
-            $this->businessID = $this->get_option('businessID');
-            $this->auth_token = $this->get_option('auth_token');
+            $this->businessID = $this->get_option( 'businessID' );
+            $this->auth_token = $this->get_option( 'auth_token' );
+            $this->rut_control_id = $this->get_option( 'rut_control_id' );
             
             $this->debug = $this->get_option( 'debug', 'yes' ) === 'yes' ? true : false;
             $this->is_test = $this->get_option( 'is_test', 'yes' ) === 'yes' ? true : false;
 
             $this->gateway_url = $this->is_test ? $this->test_url : $this->live_url;
-            $this->api_url = $this->is_test ? $this->api_test_url : $this->api_live_url;
+            $this->post_url = $this->gateway_url . '/neworder/';
+            $this->api_url = $this->gateway_url . '/api/';
 
             // Logs
 			if ( 'yes' == $this->debug ) {
@@ -97,43 +96,45 @@ function init_WC_Gateway_PAYNOW_class() {
             $description = $this->get_description();
 
             if ( $description ) {
-                echo wpautop( wptexturize( trim( $description ) ) );
+                //echo wpautop( wptexturize( trim( $description ) ) );
             }
 
-            $methods = array(
-            	'bchile' => array( 
-            		'name' => 'Banco Chile-Edwards/Citi', 
-            		'img' => 'http://qa.gtw.paynow.cl/media/logo/banco-de-chile.jpg' 
-            	),
-            	'bestado' => array( 
-            		'name' => 'Banco Estado', 
-            		'img' => 'http://qa.gtw.paynow.cl/media/logo/banco-estado.jpg' 
-            	),
-            	'webpay' => array( 
-            		'name' => 'WebPay', 
-            		'img' => 'http://qa.gtw.paynow.cl/media/logo/web-pay.png' 
-            	),
-            	'authorize_net' => array( 
-            		'name' => 'Authorize.NET', 
-            		'img' => 'http://qa.gtw.paynow.cl/media/logo/AuthNet.jpg' 
-            	)
+			$basic_auth = base64_encode( $this->businessID . ":" . $this->auth_token );
+
+			$args = array (
+            	'timeout' => 45,
+				'redirection' => 5,
+				'httpversion' => '1.0',
+				'blocking' => true,
+				'headers' => array( 
+					'Content-Type' => 'application/json',
+					'Authorization' => 'Basic ' . $basic_auth 
+				),
+				'body' => null,
+				'cookies' => array()
             );
+            
+            $response = wp_remote_get( $this->api_url . 'payment-methods/?currency=' . get_woocommerce_currency(), $args );
 
-            $html = '<div>';
-            foreach ($methods as $key => $value) {
-            	$html .= '<div>
-            	<input id="pm_' . $key . '" type="radio" name="payment_app" value="' . $key . '" />
-        		<img onclick="document.getElementById(\'pm_' . $key . '\').click()" title="' . $value['name'] . '" alt="' . $value['name'] . '" src="' . $value['img'] . '" />
-        		</div><br/>';
+            if ( is_wp_error( $response ) ) {
+				wc_add_notice( __('Payment error: ', 'woothemes') . $response->get_error_message(), 'error' );
+				return;
+			}
+
+            $result = json_decode( $response[ 'body' ], true );
+
+            $html = '<div><select class="chosen_select" name="payment_app">';
+            foreach ( $result[ 'results' ] as $pm ) {
+            	
+            	$pmName = $pm[ 'pmMethodName' ];
+            	$pmDesc = $pm[ 'pmDescription' ];
+            	//$pmLogo = $this->gateway_url . '/media/' . $pm[ 'pmLogo' ];
+            	
+            	$html .= '<option value="' . $pmName . '">' . $pmDesc . '</option>';
             }
-            $html .= '</div>';
+            $html .= '</select>';
 
             print $html;
-
-            // echo "<select class='chosen_select' name='payment_app'>
-            // <option value='bchile'>bchile</option>
-            // <option value='bestado'>bestado</option>
-            // </select>";
         }
 
         /**
@@ -145,6 +146,15 @@ function init_WC_Gateway_PAYNOW_class() {
 			$ipn_response = ! empty( $_POST ) ? $_POST : false;
 
 			if ( $ipn_response ) {
+
+				if ( $this->is_test ) {
+
+					$result = '';
+	        		foreach ($ipn_response as $key => $value) {
+	        			$result .= ' & ' . $key . '=' . $value;	
+	        		}
+					$this->log->add( 'paynow', 'IPN details: ' . $result );
+				}
 
 				$order_id = $ipn_response[ "tx_id" ];
 				$order_status = $ipn_response[ "tx_status" ];
@@ -165,8 +175,8 @@ function init_WC_Gateway_PAYNOW_class() {
 
 						if ( $order_status == "COMPLETED" || $order_status == "CONFIRMED" ){
 
-							$order->add_order_note( __( 'IPN payment completed', 'woocommerce' ) );
-							$order->payment_complete( '' );
+							$order->update_status( 'completed', __( 'IPN payment completed', 'woocommerce' ) );
+							$order->payment_complete( $order->id );
 
 						} else if ( $order_status == "REJECTED" || $order_status == "ERROR" ){
 
@@ -221,18 +231,17 @@ function init_WC_Gateway_PAYNOW_class() {
 					'default' => 'yes'
 				),
 				'is_test' => array(
-					'title'       => __( 'Paynow sandbox', 'woocommerce' ),
+					'title'       => __( 'Homologación', 'woocommerce' ),
 					'type'        => 'checkbox',
-					'label'       => __( 'Enable Paynow sandbox', 'woocommerce' ),
+					'label'       => __( 'Ambiente de pruebas.', 'woocommerce' ),
 					'default'     => 'no',
-					'description' => sprintf( __( 'Paynow sandbox can be used to test payments. Sign up for a developer account <a href="%s">here</a>.', 'woocommerce' ), 'https://qa.paynow.cl/' ),
 				),
 				'debug' => array(
-					'title'       => __( 'Debug Log', 'woocommerce' ),
+					'title'       => __( 'Trazas', 'woocommerce' ),
 					'type'        => 'checkbox',
-					'label'       => __( 'Enable logging', 'woocommerce' ),
+					'label'       => __( 'Activar trazas', 'woocommerce' ),
 					'default'     => 'no',
-					'description' => sprintf( __( 'Log Paynow events, such as IPN requests, inside <code>%s</code>', 'woocommerce' ), wc_get_log_file_path( 'paynow' ) )
+					'description' => sprintf( __( 'Guarda los eventos de Paynow, tales como los requests IPN, en el fichero <code>%s</code>', 'woocommerce' ), wc_get_log_file_path( 'paynow' ) )
 				),
 				'title' => array(
 					'title'       => __( 'Título', 'woocommerce' ),
@@ -268,6 +277,12 @@ function init_WC_Gateway_PAYNOW_class() {
                     'description' => __( 'Token nesesario para la autenciación en paynow.', 'woocommerce' ),
                     'default'     => __( '', 'woocommerce' ),
                     'desc_tip'    => true,
+                ),
+                'rut_control_id' => array(
+                    'title'       => __( 'Nombre del control para el RUT', 'woocommerce' ),
+                    'type'        => 'text',
+                    'description' => __( 'Aqui debe especificar el nombre del control donde los clientes epecificarán su RUT. Este valor es usado por algunos métodos de pago. Por ejemplo: Banco de estado.', 'woocommerce' ),
+                    'default'     => __( '', 'woocommerce' ),
                 ),
 			);
 		}
@@ -369,19 +384,30 @@ function init_WC_Gateway_PAYNOW_class() {
 			// Mostrar formulario de despacho y facturación (Y = Solicita, N = NO Solicita)
 			$post_data[ 'includeBilling' ] = 'N';
 
-			$post_data[ 'billing_first_name' ] = $order->billing_first_name;
-			$post_data[ 'billing_last_name' ] = $order->billing_last_name;
-			$post_data[ 'billing_company' ] = $order->billing_company;
-			$post_data[ 'billing_address_1' ] = $order->billing_address_1;
-			$post_data[ 'billing_address_2' ] = $order->billing_address_2;
-			$post_data[ 'billing_city' ] = $order->billing_city;
-			$post_data[ 'billing_state' ] = $order->billing_state;
-			$post_data[ 'billing_postcode' ] = $order->billing_postcode;
-			$post_data[ 'billing_country' ] = $order->billing_country;
-			$post_data[ 'billing_email' ] = $order->billing_email;
+			$post_data[ 'buyerName' ] = $order->billing_first_name;
+			$post_data[ 'buyerLastName' ] = $order->billing_last_name;
+			$post_data[ 'buyerEmail' ] = $order->billing_email;
+			$post_data[ 'buyerPhone' ] = $order->billing_phone;
+
+			if ( $this->rut_control_id != '' ){
+				$post_data[ 'buyerRut' ] = $_POST[ $this->rut_control_id ];
+			}
+
+			// $post_data[ 'billing_first_name' ] = $order->billing_first_name;
+			// $post_data[ 'billing_last_name' ] = $order->billing_last_name;
+			// $post_data[ 'billing_company' ] = $order->billing_company;
+			// $post_data[ 'billing_address_1' ] = $order->billing_address_1;
+			// $post_data[ 'billing_address_2' ] = $order->billing_address_2;
+			// $post_data[ 'billing_city' ] = $order->billing_city;
+			// $post_data[ 'billing_state' ] = $order->billing_state;
+			// $post_data[ 'billing_postcode' ] = $order->billing_postcode;
+			// $post_data[ 'billing_country' ] = $order->billing_country;
+			// $post_data[ 'billing_email' ] = $order->billing_email;
+			// $post_data[ 'billing_phone' ] = $order->billing_phone;
 
 			$post_data[ 'billingComments' ] = '';
-			$post_data[ 'paymentComments' ] = '';
+
+			$post_data[ 'paymentComments' ] = $_POST[ 'order_comments' ];
 
 			$post_data[ 'includeShipping' ] = 'N';
 			$post_data[ 'shippingAmount' ] = '0';
@@ -417,14 +443,14 @@ function init_WC_Gateway_PAYNOW_class() {
 		    );
 		    
 		    echo "<pre>";
-		    print_r($this->gateway_url);
+		    print_r($this->post_url);
 		    print_r('<br/>');
             print_r($post_array);
 
             // print_r($order);
 		    // print_r($_POST);
             
-            $response = wp_remote_post( $this->gateway_url, $post_array );
+            $response = wp_remote_post( $this->post_url, $post_array );
 
             print_r($response);
 
@@ -447,12 +473,12 @@ function init_WC_Gateway_PAYNOW_class() {
 				$order->reduce_order_stock();
 
 				// Remove cart
-				//WC()->cart->empty_cart();
+				WC()->cart->empty_cart();
 
 				// Return thankyou redirect
 				return array(
 					'result' 	=> 'success',
-					'redirect'	=> $this->gateway_url . "?token=" . $result["token"]
+					'redirect'	=> $this->post_url . "?token=" . $result["token"]
 				);
 			}
 			else
