@@ -80,7 +80,7 @@ function init_WC_Gateway_PAYNOW_class() {
 			// Actions
 			add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 			//add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'save_account_details' ) );		
-			add_action( 'woocommerce_thankyou_paynow', array( $this, 'gateway_return_handler' ) );
+			add_action( 'woocommerce_thankyou_paynow', array( $this, 'thankyou_page' ) );
 
 			// Customer Emails
 			add_action( 'woocommerce_email_before_order_table', array( $this, 'email_instructions' ), 10, 3 );
