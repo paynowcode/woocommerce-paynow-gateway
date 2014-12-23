@@ -334,7 +334,7 @@ function init_WC_Gateway_PAYNOW_class() {
 			//Identificar el negocio donde vas a recaudar tus ventas
 			$post_data['businessID'] = $this->businessID;
 			$post_data['tSource'] = 'API';
-			$post_data['tSourceID'] = 'http://store.paynow.cl';
+			$post_data['tSourceID'] = $_SERVER[ 'SERVER_NAME' ];//http://store.paynow.cl';
 			$post_data['businessLogo'] = '';
 
 			$item_loop = 0;
@@ -442,17 +442,14 @@ function init_WC_Gateway_PAYNOW_class() {
 				'cookies' => array()
 		    );
 		    
-		    echo "<pre>";
-		    print_r($this->post_url);
-		    print_r('<br/>');
-            print_r($post_array);
+		    // echo "<pre>";
+		    // print_r($this->post_url);
+		    // print_r('<br/>');
+      		// print_r($post_array);
 
-            // print_r($order);
-		    // print_r($_POST);
-            
             $response = wp_remote_post( $this->post_url, $post_array );
 
-            print_r($response);
+            // print_r($response);
 
 			if ( is_wp_error( $response ) ) {
 				wc_add_notice( __('Payment error: ', 'woothemes') . $response->get_error_message(), 'error' );
@@ -461,9 +458,9 @@ function init_WC_Gateway_PAYNOW_class() {
 			
 			$result = json_decode($response[ 'body' ], true);
 
-			echo "<pre>";
-            print_r($result);
-            echo "</pre>";
+			// echo "<pre>";
+   			// print_r($result);
+   			// echo "</pre>";
 			
 			if ($result["status"] == 'ok') {
 				// Mark as on-hold (we're awaiting the payment)
