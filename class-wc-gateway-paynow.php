@@ -43,7 +43,7 @@ function init_WC_Gateway_PAYNOW_class() {
 		 */
 		public function __construct() {
 			$this->id                 = 'paynow';
-			$this->icon               = 'http://qa.gtw.paynow.cl/static/images/logotipo-mini-header-c.png';//apply_filters('woocommerce_bacs_icon', '');
+			$this->icon               = 'https://checkout.paynow.cl/static/images/logotipo-mini-header-c.png';//apply_filters('woocommerce_bacs_icon', '');
 			$this->has_fields         = true;
 			$this->method_title       = __( 'Paynow', 'woocommerce' );
 			$this->method_description = __( 'Permite realizar pagos a través de Paynow.', 'woocommerce' );
