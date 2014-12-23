@@ -35,7 +35,7 @@ function init_WC_Gateway_PAYNOW_class() {
 
 		var $notify_url;
 
-		var $live_url = 'http://gtw.paynow.cl';
+		var $live_url = 'https://checkout.paynow.cl';
 		var $test_url = 'http://qa.gtw.paynow.cl';
 
 		/**
